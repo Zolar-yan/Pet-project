@@ -24,6 +24,7 @@ var bot *tgbotapi.BotAPI
 // Структура состояния пользователя
 type UserState struct {
 	AwaitingDescription bool
+	AwaitingDoneID      bool // новое состояние для /done
 }
 
 var userStates = make(map[int64]*UserState)
@@ -64,7 +65,7 @@ func handleHelpCommand() string {
 /start - начать работу с ботом
 /add - добавить новую задачу (после команды нужно ввести описание)
 /list - показать список задач
-/done <ID> - отметить задачу как выполненную по ID`
+/done - отметить задачу как выполненную по ID (после команды нужно ввести ID)`
 }
 
 func handleAddCommand(description string) string {
@@ -103,6 +104,7 @@ func createKeyboard() tgbotapi.ReplyKeyboardMarkup {
 			tgbotapi.NewKeyboardButton("Добавить задачу"),
 			tgbotapi.NewKeyboardButton("Список задач"),
 			tgbotapi.NewKeyboardButton("/help"),
+			tgbotapi.NewKeyboardButton("Выполнено"),
 		},
 	}
 	return tgbotapi.NewReplyKeyboard(buttons...)
@@ -142,14 +144,31 @@ func main() {
 			// Пользователь вводит описание новой задачи
 			description := update.Message.Text
 			handleAddCommand(description)
-			// Снимаем состояние ожидания описания после добавления задачи
 			delete(userStates, chatID)
 
 			// Отправляем подтверждение пользователю и показываем меню снова
 			msg := tgbotapi.NewMessage(chatID, "Задача добавлена.")
 			msg.ReplyMarkup = createKeyboard()
 			bot.Send(msg)
-			continue // Переходим к следующему обновлению после обработки этого состояния
+			continue
+
+		} else if exists && state.AwaitingDoneID { // новая проверка для /done по ID
+			idStr := strings.TrimSpace(update.Message.Text)
+			id, err := strconv.Atoi(idStr)
+			if err != nil || id <= 0 {
+				msg := tgbotapi.NewMessage(chatID, "Некорректный ID. Пожалуйста, введите положительное число.")
+				bot.Send(msg)
+				continue
+			}
+			response := handleCompleteCommand(id)
+			msg := tgbotapi.NewMessage(chatID, response)
+			msg.ReplyMarkup = createKeyboard()
+			bot.Send(msg)
+
+			// После обработки снимаем состояние ожидания ID для /done
+			delete(userStates, chatID)
+			continue
+
 		}
 
 		text := update.Message.Text
@@ -164,7 +183,6 @@ func main() {
 			bot.Send(msg)
 
 		case "Добавить задачу":
-			// Устанавливаем состояние ожидания ввода описания задачи для этого пользователя
 			userStates[chatID] = &UserState{AwaitingDescription: true}
 			msg := tgbotapi.NewMessage(chatID, "Пожалуйста, введите описание задачи:")
 			bot.Send(msg)
@@ -177,6 +195,12 @@ func main() {
 		case "/help":
 			response := handleHelpCommand()
 			msg := tgbotapi.NewMessage(chatID, response)
+			bot.Send(msg)
+
+		case "Выполнено":
+			// Устанавливаем состояние ожидания ввода ID задачи для этого пользователя.
+			userStates[chatID] = &UserState{AwaitingDoneID: true}
+			msg := tgbotapi.NewMessage(chatID, "Пожалуйста, введите ID задачи для завершения:")
 			bot.Send(msg)
 
 		default:
@@ -197,21 +221,6 @@ func main() {
 
 			if strings.HasPrefix(text, "/list") || text == "/list" {
 				response := handleListCommand()
-				msg := tgbotapi.NewMessage(chatID, response)
-				bot.Send(msg)
-				continue
-			}
-
-			if strings.HasPrefix(text, "/done ") {
-				idStr := strings.TrimPrefix(text, "/done ")
-				idStr = strings.TrimSpace(idStr)
-				id, err := strconv.Atoi(idStr)
-				if err != nil || id <= 0 {
-					msg := tgbotapi.NewMessage(chatID, "Некорректный ID. Пожалуйста, укажите положительное число.")
-					bot.Send(msg)
-					continue
-				}
-				response := handleCompleteCommand(id)
 				msg := tgbotapi.NewMessage(chatID, response)
 				bot.Send(msg)
 				continue
